@@ -1,0 +1,10 @@
+pandas
+yfinance
+pyarrow
+dvc
+mlflow
+numpy
+scikit-learn
+xgboost
+fastapi
+uvicorn

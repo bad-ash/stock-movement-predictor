@@ -1,0 +1,5 @@
+outs:
+- md5: 8c6e1337822c93d8c49eb0bf5eb7d791
+  size: 401311
+  hash: md5
+  path: spy.parquet
