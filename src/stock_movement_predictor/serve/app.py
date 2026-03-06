@@ -6,6 +6,7 @@ against the exact training schema stored in model run metadata.
 
 from __future__ import annotations
 
+import os
 from typing import Dict
 
 import mlflow.sklearn
@@ -15,8 +16,8 @@ from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
 
-REGISTERED_MODEL_NAME = "SMX_SPY_XGB"
-MODEL_ALIAS = "champion"
+REGISTERED_MODEL_NAME = os.getenv("REGISTERED_MODEL_NAME", "SMX_SPY_XGB")
+MODEL_ALIAS = os.getenv("MODEL_ALIAS", "champion")
 MODEL_URI = f"models:/{REGISTERED_MODEL_NAME}@{MODEL_ALIAS}"
 
 app = FastAPI(title="SMX Inference API", version="0.1.0")

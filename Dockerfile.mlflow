@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY scripts/run_mlflow_server.sh /app/scripts/run_mlflow_server.sh
+
+RUN pip install --upgrade pip && pip install mlflow psycopg2-binary boto3 && chmod +x /app/scripts/run_mlflow_server.sh
+
+EXPOSE 5000
+
+CMD ["/app/scripts/run_mlflow_server.sh"]

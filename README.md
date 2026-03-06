@@ -24,6 +24,17 @@ Clean v1 scope:
 - Pre-push sanity check:
   - `./scripts/prepush_sanity.sh`
 
+## Deployment Assets
+- API container: `Dockerfile.api`
+- MLflow server container: `Dockerfile.mlflow`
+- Fly app configs:
+  - `fly.api.toml`
+  - `fly.mlflow.toml`
+- MLflow startup script: `scripts/run_mlflow_server.sh`
+- Production env template: `.env.production.example`
+- Scheduled retraining workflow: `.github/workflows/retrain.yml`
+- Full deployment guide: `docs/deployment.md`
+
 ## Evaluation and Promotion Flow
 1. `report_v1` runs the shared evaluation pipeline and writes:
    - `reports/v1_report.json`

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 
 import mlflow
@@ -24,15 +25,17 @@ from stock_movement_predictor.features.feat_engineer import make_features
 from stock_movement_predictor.models.xgboost import fit_xgb_class
 
 
-RAW_PATH = "data/raw/spy.parquet"
-REPORT_PATH = Path("reports/v1_report.json")
-REPORT_FAMILY = "price_return"
-EXPERIMENT_NAME = "SMX-SPY"
-REGISTERED_MODEL_NAME = "SMX_SPY_XGB"
-CHAMPION_ALIAS = "champion"
-CANDIDATE_ALIAS = "candidate"
-HOLDOUT_START = "2022-01-01"
-PROMOTION_MIN_LOGLOSS_IMPROVEMENT = 0.0005
+RAW_PATH = os.getenv("RAW_PATH", "data/raw/spy.parquet")
+REPORT_PATH = Path(os.getenv("REPORT_PATH", "reports/v1_report.json"))
+REPORT_FAMILY = os.getenv("REPORT_FAMILY", "price_return")
+EXPERIMENT_NAME = os.getenv("EXPERIMENT_NAME", "SMX-SPY")
+REGISTERED_MODEL_NAME = os.getenv("REGISTERED_MODEL_NAME", "SMX_SPY_XGB")
+CHAMPION_ALIAS = os.getenv("CHAMPION_ALIAS", "champion")
+CANDIDATE_ALIAS = os.getenv("CANDIDATE_ALIAS", "candidate")
+HOLDOUT_START = os.getenv("HOLDOUT_START", "2022-01-01")
+PROMOTION_MIN_LOGLOSS_IMPROVEMENT = float(
+    os.getenv("PROMOTION_MIN_LOGLOSS_IMPROVEMENT", "0.0005")
+)
 SEED = 42
 
 

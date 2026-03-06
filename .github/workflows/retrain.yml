@@ -1,0 +1,44 @@
+name: Scheduled Retrain
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 12 * * 1" # 12:15 UTC, Mondays
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: src
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      REPORT_FAMILY: ${{ vars.REPORT_FAMILY || 'price_return' }}
+      REGISTERED_MODEL_NAME: ${{ vars.REGISTERED_MODEL_NAME || 'SMX_SPY_XGB' }}
+      EXPERIMENT_NAME: ${{ vars.EXPERIMENT_NAME || 'SMX-SPY' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ingest latest data
+        run: python -m stock_movement_predictor.jobs.ingest_spy
+
+      - name: Generate evaluation report
+        run: python -m stock_movement_predictor.jobs.report_v1
+
+      - name: Train, register, and promote
+        run: python -m stock_movement_predictor.jobs.train_register_promote
