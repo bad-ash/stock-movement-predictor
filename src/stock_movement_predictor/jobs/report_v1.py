@@ -31,10 +31,6 @@ def main() -> None:
     print(f"Wrote {OUT_MD}")
 
 
-if __name__ == "__main__":
-    main()
-
-
 def _render_markdown(result: dict[str, object]) -> str:
     """Render a human-readable report table from structured evaluation output."""
     config = result["config"]
@@ -88,3 +84,7 @@ def _render_markdown(result: dict[str, object]) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    main()
