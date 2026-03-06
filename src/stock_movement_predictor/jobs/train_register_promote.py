@@ -14,14 +14,14 @@ import json
 from pathlib import Path
 
 import mlflow
-import mlflow.sklearn
+from mlflow import sklearn as mlflow_sklearn
 import numpy as np
 import pandas as pd
 from mlflow.tracking import MlflowClient
 
 from stock_movement_predictor.eval.v1_evaluation import EvalConfig, run_ablation
 from stock_movement_predictor.features.feat_engineer import make_features
-from stock_movement_predictor.models.xgboost import fit_xgb_reg
+from stock_movement_predictor.models.xgboost import fit_xgb_class
 
 
 RAW_PATH = "data/raw/spy.parquet"
@@ -38,79 +38,26 @@ SEED = 42
 
 @dataclass(frozen=True)
 class EvalResult:
-    """Candidate performance and params selected for promotion decision."""
+    """Candidate performance and params selected for promotion decision.
+
+    Attributes:
+        metrics: Holdout metrics loaded from the canonical evaluation report.
+        params: Hyperparameters associated with the selected candidate family.
+    """
 
     metrics: dict[str, float]
     params: dict[str, float | int]
 
 
-def _get_data() -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    """Load all features/labels used for final model retraining."""
-    df = pd.read_parquet(RAW_PATH).set_index("Date")
-    X, y, feats = make_features(df)
-    return X, y, feats
-
-
-def _generate_report_payload() -> dict[str, object]:
-    """Run evaluation and return report payload matching report_v1 format."""
-    return {
-        "report_version": "v1",
-        **run_ablation(EvalConfig()),
-    }
-
-
-def _load_or_generate_report() -> dict[str, object]:
-    """Load v1 report JSON, generating it if missing."""
-    if REPORT_PATH.exists():
-        return json.loads(REPORT_PATH.read_text())
-
-    payload = _generate_report_payload()
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return payload
-
-
-def _candidate_from_report(report: dict[str, object], family: str) -> EvalResult:
-    """Extract selected family metrics/params from canonical report artifact."""
-    rows = report.get("families", [])
-    if not isinstance(rows, list):
-        raise ValueError("Invalid report format: expected list in 'families'.")
-
-    for row in rows:
-        if row.get("family") == family:
-            return EvalResult(
-                metrics=dict(row["holdout_metrics"]),
-                params=dict(row["best_params"]),
-            )
-    raise ValueError(f"Family '{family}' not found in {REPORT_PATH}.")
-
-
-def _resolve_candidate_version(client: MlflowClient, run_id: str) -> str:
-    versions = client.search_model_versions(f"name='{REGISTERED_MODEL_NAME}'")
-    by_run = [v for v in versions if v.run_id == run_id]
-    if not by_run:
-        raise RuntimeError("Could not resolve registered model version for this run.")
-    return max(by_run, key=lambda v: int(v.version)).version
-
-
-def _champion_logloss(client: MlflowClient) -> float | None:
-    try:
-        champion_mv = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, CHAMPION_ALIAS)
-    except Exception:
-        return None
-    run = client.get_run(champion_mv.run_id)
-    if "holdout_logloss" not in run.data.metrics:
-        return None
-    return float(run.data.metrics["holdout_logloss"])
-
-
-def _should_promote(candidate_logloss: float, champion_logloss: float | None) -> bool:
-    if champion_logloss is None:
-        return True
-    return candidate_logloss <= (champion_logloss - PROMOTION_MIN_LOGLOSS_IMPROVEMENT)
-
-
 def main() -> None:
+    """Execute train -> register -> promote flow using report-driven gating.
+
+    Steps:
+    1) Load (or generate) canonical report payload.
+    2) Select candidate family metrics/params from report.
+    3) Retrain model on full dataset and register new model version.
+    4) Update `candidate` alias and promote to `champion` if gate passes.
+    """
     report = _load_or_generate_report()
     eval_result = _candidate_from_report(report, REPORT_FAMILY)
     X_all, y_all, _ = _get_data()
@@ -137,7 +84,7 @@ def main() -> None:
         val_len = max(25, int(n_all * 0.10))
         tr_idx = np.arange(0, n_all - val_len)
         val_idx = np.arange(n_all - val_len, n_all)
-        final_model = fit_xgb_reg(
+        final_model = fit_xgb_class(
             X_all.iloc[tr_idx],
             y_all.iloc[tr_idx],
             X_all.iloc[val_idx],
@@ -146,9 +93,9 @@ def main() -> None:
             seed=SEED,
         )
 
-        mlflow.sklearn.log_model(
+        mlflow_sklearn.log_model(
             final_model,
-            artifact_path="model",
+            name="model",
             registered_model_name=REGISTERED_MODEL_NAME,
         )
 
@@ -166,6 +113,124 @@ def main() -> None:
             f"run_id={run.info.run_id} version={candidate_version} "
             f"holdout_logloss={holdout_logloss:.6f} champion_prev={champion_ll} promoted={promoted}"
         )
+
+
+def _load_or_generate_report() -> dict[str, object]:
+    """Load `reports/v1_report.json`, generating it if missing.
+
+    Returns:
+        Parsed report payload as a dictionary.
+    """
+    if REPORT_PATH.exists():
+        return json.loads(REPORT_PATH.read_text())
+
+    payload = _generate_report_payload()
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    return payload
+
+
+def _candidate_from_report(report: dict[str, object], family: str) -> EvalResult:
+    """Extract candidate metrics/params for one feature family from report data.
+
+    Args:
+        report: Parsed report payload.
+        family: Feature family name to select (for example, `price_return`).
+
+    Returns:
+        `EvalResult` containing holdout metrics and best params for that family.
+
+    Raises:
+        ValueError: If report structure is invalid or family is not present.
+    """
+    rows = report.get("families", [])
+    if not isinstance(rows, list):
+        raise ValueError("Invalid report format: expected list in 'families'.")
+
+    for row in rows:
+        if row.get("family") == family:
+            return EvalResult(
+                metrics=dict(row["holdout_metrics"]),
+                params=dict(row["best_params"]),
+            )
+    raise ValueError(f"Family '{family}' not found in {REPORT_PATH}.")
+
+
+def _should_promote(candidate_logloss: float, champion_logloss: float | None) -> bool:
+    """Decide whether candidate should become champion.
+
+    Args:
+        candidate_logloss: Candidate holdout logloss.
+        champion_logloss: Existing champion holdout logloss, or `None`.
+
+    Returns:
+        `True` when candidate should be promoted.
+    """
+    if champion_logloss is None:
+        return True
+    return candidate_logloss <= (champion_logloss - PROMOTION_MIN_LOGLOSS_IMPROVEMENT)
+
+
+def _get_data() -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    """Load full feature/label data used for final model retraining.
+
+    Returns:
+        Tuple of `(X, y, feature_names)` from the raw parquet source.
+    """
+    df = pd.read_parquet(RAW_PATH).set_index("Date")
+    X, y, feats = make_features(df)
+    return X, y, feats
+
+
+def _generate_report_payload() -> dict[str, object]:
+    """Run canonical v1 evaluation and build a report payload.
+
+    Returns:
+        Dictionary with report metadata and evaluation output.
+    """
+    return {
+        "report_version": "v1",
+        **run_ablation(EvalConfig()),
+    }
+
+
+def _resolve_candidate_version(client: MlflowClient, run_id: str) -> str:
+    """Resolve the registered model version created by the current MLflow run.
+
+    Args:
+        client: MLflow tracking client.
+        run_id: Active MLflow run id.
+
+    Returns:
+        Model version string associated with this run.
+
+    Raises:
+        RuntimeError: If no registered version is found for the run.
+    """
+    versions = client.search_model_versions(f"name='{REGISTERED_MODEL_NAME}'")
+    by_run = [v for v in versions if v.run_id == run_id]
+    if not by_run:
+        raise RuntimeError("Could not resolve registered model version for this run.")
+    return max(by_run, key=lambda v: int(v.version)).version
+
+
+def _champion_logloss(client: MlflowClient) -> float | None:
+    """Fetch current champion holdout logloss, if available.
+
+    Args:
+        client: MLflow tracking client.
+
+    Returns:
+        Champion holdout logloss, or `None` when alias/metric is missing.
+    """
+    try:
+        champion_mv = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, CHAMPION_ALIAS)
+    except Exception:
+        return None
+    run = client.get_run(champion_mv.run_id)
+    if "holdout_logloss" not in run.data.metrics:
+        return None
+    return float(run.data.metrics["holdout_logloss"])
 
 
 if __name__ == "__main__":

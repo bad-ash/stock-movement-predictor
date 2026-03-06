@@ -17,7 +17,13 @@ Params = Dict[str, float | int]
 
 @dataclass(frozen=True)
 class TuneResult:
-    """One hyperparameter trial result with validation metrics."""
+    """Container for one hyperparameter trial.
+
+    Attributes:
+        params: Hyperparameters used to train the model.
+        metrics: Validation metrics for that trial.
+        best_iteration: Best boosting round selected by early stopping.
+    """
 
     params: Params
     metrics: MetricDict
@@ -25,11 +31,20 @@ class TuneResult:
 
 
 def _directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Compute sign-based agreement between true and predicted labels.
+
+    Args:
+        y_true: True labels.
+        y_pred: Predicted labels.
+
+    Returns:
+        Fraction of matching signs.
+    """
     # Treat 0 as 0 sign; fine for this use case.
     return float((np.sign(y_true) == np.sign(y_pred)).mean())
 
 
-def fit_xgb_reg(
+def fit_xgb_class(
     X_train: pd.DataFrame,
     y_train: pd.Series,
     X_val: Optional[pd.DataFrame] = None,
@@ -37,10 +52,20 @@ def fit_xgb_reg(
     params: Optional[Params] = None,
     seed: int = 42,
 ) -> xgb.XGBClassifier:
-    """
-    Fit an XGBoost classifier. If validation data is provided, uses early stopping.
+    """Train an XGBoost binary classifier.
 
-    params: hyperparameters for the model. If None, uses reasonable defaults.
+    If validation data is provided, early stopping is enabled.
+
+    Args:
+        X_train: Training features.
+        y_train: Training labels (0/1).
+        X_val: Optional validation features.
+        y_val: Optional validation labels.
+        params: Optional hyperparameter overrides.
+        seed: Random seed.
+
+    Returns:
+        Fitted `xgb.XGBClassifier`.
     """
     default_params: Params = {
         "n_estimators": 2000,        # large; early stopping picks effective number
@@ -90,6 +115,16 @@ def evaluate_classification(
     y_prob: np.ndarray,
     threshold: float = 0.5,
 ) -> MetricDict:
+    """Evaluate classification probabilities.
+
+    Args:
+        y_true: Ground-truth labels (0/1).
+        y_prob: Predicted probability for class 1.
+        threshold: Threshold used to convert probabilities to class labels.
+
+    Returns:
+        Dict with `acc`, `logloss`, `brier`, and `dir_acc`.
+    """
     # Threshold-dependent metric.
     y_pred = (y_prob >= threshold).astype(int)
     acc = float((y_true == y_pred).mean())
@@ -99,7 +134,7 @@ def evaluate_classification(
     return {"acc": acc, "logloss": logloss, "brier": brier, "dir_acc": dir_acc}
 
 
-def tune_xgb_reg(
+def tune_xgb_class(
     X: pd.DataFrame,
     y: pd.Series,
     train_idx: np.ndarray,
@@ -108,22 +143,19 @@ def tune_xgb_reg(
     seed: int = 42,
     threshold: float = 0.5,
 ) -> List[TuneResult]:
-    """
-    Manual-but-structured tuning.
-
-    Trains models on training indices and early-stops on validation indices.
-    Does not touch test/backtest data.
+    """Run parameter tuning on a fixed train/validation split.
 
     Args:
         X: Feature matrix.
-        y: Target series.
-        train_idx: Row indices for training.
-        val_idx: Row indices for validation.
-        param_grid: Iterable of parameter dicts.
+        y: Label series.
+        train_idx: Training row indices.
+        val_idx: Validation row indices.
+        param_grid: Iterable of parameter dictionaries.
         seed: Random seed.
+        threshold: Probability threshold for accuracy metrics.
 
     Returns:
-        A list of tuning results sorted by validation MAE (ascending).
+        List of `TuneResult`, sorted by `(logloss, brier, -acc)`.
     """
     X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
     X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
@@ -131,7 +163,7 @@ def tune_xgb_reg(
     results: List[TuneResult] = []
 
     for params in param_grid:
-        model = fit_xgb_reg(X_train, y_train, X_val, y_val, params=params, seed=seed)
+        model = fit_xgb_class(X_train, y_train, X_val, y_val, params=params, seed=seed)
         y_prob = model.predict_proba(X_val)[:, 1]
         metrics = evaluate_classification(y_val.to_numpy(), y_prob, threshold=threshold)
         best_iter = getattr(model, "best_iteration", None)
@@ -146,7 +178,7 @@ def tune_xgb_reg(
     return results
 
 
-def backtest_xgb_reg(
+def backtest_xgb_class(
     X: pd.DataFrame,
     y: pd.Series,
     splits: List[Tuple[np.ndarray, np.ndarray]],
@@ -155,19 +187,21 @@ def backtest_xgb_reg(
     val_frac_within_train: float = 0.10,
     threshold: float = 0.5,
 ) -> Tuple[np.ndarray, MetricDict]:
-    """
-    Rolling/expanding-window evaluation.
+    """Run expanding-window backtest and score aggregated out-of-fold predictions.
 
-    For each fold:
-    - train on tr
-    - take the *last* val_frac_within_train portion of tr as validation (for early stopping)
-    - test on te (never used in training or early stopping)
+    Args:
+        X: Feature matrix.
+        y: Label series.
+        splits: List of `(train_indices, test_indices)` folds.
+        params: Model hyperparameters.
+        seed: Random seed.
+        val_frac_within_train: Fraction of each train fold reserved for validation.
+        threshold: Probability threshold for accuracy metrics.
 
     Returns:
-    - preds aligned to y (NaN where not predicted)
-    - aggregate metrics computed over all predicted points
-
-    IMPORTANT: Hyperparameters must be supplied (params). This function does not tune.
+        Tuple of:
+        - Out-of-fold probabilities aligned to `y` (NaN where not predicted).
+        - Aggregate metrics over predicted rows.
     """
     n = len(y)
     probs = np.full(n, np.nan, dtype=float)
@@ -185,7 +219,7 @@ def backtest_xgb_reg(
         X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
         X_te = X.iloc[te]
 
-        model = fit_xgb_reg(X_tr, y_tr, X_val, y_val, params=params, seed=seed)
+        model = fit_xgb_class(X_tr, y_tr, X_val, y_val, params=params, seed=seed)
         probs[te] = model.predict_proba(X_te)[:, 1]
 
     mask = ~np.isnan(probs)
@@ -194,10 +228,7 @@ def backtest_xgb_reg(
 
 
 def make_small_param_grid() -> List[Params]:
-    """
-    A small starter grid you can run manually from terminal.
-    Keep it small at first; expand later.
-    """
+    """Build a compact starter hyperparameter grid for quick experiments."""
     grid: List[Params] = []
     for max_depth in [2, 3, 4]:
         for learning_rate in [0.02, 0.03, 0.05]:

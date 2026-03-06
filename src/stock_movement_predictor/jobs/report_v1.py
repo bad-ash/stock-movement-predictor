@@ -14,6 +14,27 @@ OUT_JSON = OUT_DIR / "v1_report.json"
 OUT_MD = OUT_DIR / "v1_report.md"
 
 
+def main() -> None:
+    """Run evaluation and write report artifacts under ./reports."""
+    result = run_ablation(EvalConfig())
+    payload = {
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "report_version": "v1",
+        **result,
+    }
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    OUT_JSON.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    OUT_MD.write_text(_render_markdown(payload))
+
+    print(f"Wrote {OUT_JSON}")
+    print(f"Wrote {OUT_MD}")
+
+
+if __name__ == "__main__":
+    main()
+
+
 def _render_markdown(result: dict[str, object]) -> str:
     """Render a human-readable report table from structured evaluation output."""
     config = result["config"]
@@ -67,24 +88,3 @@ def _render_markdown(result: dict[str, object]) -> str:
 
     lines.append("")
     return "\n".join(lines)
-
-
-def main() -> None:
-    """Run evaluation and write report artifacts under ./reports."""
-    result = run_ablation(EvalConfig())
-    payload = {
-        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "report_version": "v1",
-        **result,
-    }
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    OUT_JSON.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    OUT_MD.write_text(_render_markdown(payload))
-
-    print(f"Wrote {OUT_JSON}")
-    print(f"Wrote {OUT_MD}")
-
-
-if __name__ == "__main__":
-    main()
