@@ -23,92 +23,17 @@ ROLL_Z_WIN = 252          # set None to disable
 WINSOR_Q = None           # disabled to avoid global quantile leakage across time splits
 TARGET_HORIZON_DAYS = 5   # classify whether close is higher after this many trading days
 
-def _winsorize(s: pd.Series, q=0.001):
-    if q is None:
-        return s
-    lo, hi = s.quantile(q), s.quantile(1 - q)
-    return s.clip(lower=lo, upper=hi)
-
-
-def _canonicalize_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize incoming OHLCV data so downstream feature code can assume:
-    - `date` column
-    - lowercase OHLCV column names (`open`, `high`, `low`, `close`, `volume`)
-    """
-    work = df.copy()
-
-    if "date" not in work.columns and "Date" not in work.columns:
-        work = work.reset_index()
-
-    normalized = {
-        c: c.strip().lower().replace(" ", "")
-        for c in work.columns
-    }
-    work = work.rename(columns=normalized)
-
-    if "date" not in work.columns:
-        if "index" in work.columns:
-            work = work.rename(columns={"index": "date"})
-        else:
-            raise ValueError("Input data must provide a date column or DatetimeIndex.")
-
-    req = ["open", "high", "low", "close", "volume"]
-    missing = [c for c in req if c not in work.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    return work
-
-
-
-
-def _kama(series, window=10, pow1=2, pow2=30):
-    # Simple KAMA approximation for trend and slope
-    change = series.diff(window).abs()
-    volatility = series.diff().abs().rolling(window).sum()
-    er = change / volatility
-    sc = (er * (2/(pow1+1) - 2/(pow2+1)) + 2/(pow2+1))**2
-    out = [np.nan] * len(series)
-    if len(series) > window:
-        out[window] = series.iloc[window]
-        for i in range(window + 1, len(series)):
-            out[i] = out[i-1] + sc.iloc[i] * (series.iloc[i] - out[i-1])
-    return pd.Series(out, index=series.index)
-
-
-
-
-
-def _parkinson_vol(high, low, win=20):
-    # High-low volatility estimator
-    with np.errstate(divide='ignore'):
-        rs = (np.log(high / low))**2
-    return np.sqrt((1.0 / (4.0 * np.log(2))) * rs.rolling(win).mean())
-
-
-
-
-
-def _rogers_satchell_vol(open_, high, low, close, win=20):
-    # Directional volatility estimator
-    u = np.log(high / close)
-    d = np.log(low / close)
-    cu = np.log(high / open_)
-    cd = np.log(low / open_)
-    rs = (u * cu + d * cd).rolling(win).mean().clip(lower=0)
-    return np.sqrt(rs)
-
-
-
-
-
-
-
-
-
 def make_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
-    """Build model features and binary target aligned on the same date index."""
+    """Build the full feature matrix and binary target for model training.
+
+    Input:
+    - Raw OHLCV-like frame (Date/Open/High/Low/Close/Volume expected)
+
+    Output:
+    - `out`: feature DataFrame indexed by date
+    - `target`: binary series aligned to `out`, where 1 means future adjclose is higher
+    - feature name list
+    """
     work = _canonicalize_ohlcv_frame(df)
 
     # Dates and required columns
@@ -200,7 +125,11 @@ def make_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]
 
     # Drop early rows created by rolling windows
     work = work.dropna().reset_index(drop=True)
-    raw_close_by_date = pd.Series(work["close"].to_numpy(), index=work["date"], name="close").sort_index()
+    if "adjclose" not in work.columns:
+        raise ValueError("Expected 'AdjClose'/'adjclose' column for target construction.")
+    raw_adjclose_by_date = pd.Series(
+        work["adjclose"].to_numpy(), index=work["date"], name="adjclose"
+    ).sort_index()
 
     # Calendar features (raw and cyclical)
     work["dow"]   = work["date"].dt.weekday # type: ignore
@@ -261,10 +190,84 @@ def make_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]
     out = out.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
     out = out.set_index("date").sort_index()
 
-    # Binary target: whether price is higher after TARGET_HORIZON_DAYS.
-    next_close = raw_close_by_date.shift(-TARGET_HORIZON_DAYS)
-    target = (next_close > raw_close_by_date).where(next_close.notna())
+    # Binary target: whether adjusted close is higher after TARGET_HORIZON_DAYS.
+    next_adjclose = raw_adjclose_by_date.shift(-TARGET_HORIZON_DAYS)
+    target = (next_adjclose > raw_adjclose_by_date).where(next_adjclose.notna())
     target = target.loc[out.index].dropna().astype(int)
     out = out.loc[target.index]
 
     return out, target, list(out.columns)
+
+
+def _winsorize(s: pd.Series, q=0.001):
+    """Clip a series to lower/upper quantiles to reduce tail outliers."""
+    if q is None:
+        return s
+    lo, hi = s.quantile(q), s.quantile(1 - q)
+    return s.clip(lower=lo, upper=hi)
+
+
+def _canonicalize_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize raw OHLCV data into one expected shape:
+    - `date` column
+    - lowercase columns (`open`, `high`, `low`, `close`, `volume`, optional `adjclose`)
+    """
+    work = df.copy()
+
+    if "Date" in work.columns:
+        work = work.rename(columns={"Date": "date"})
+    elif "date" not in work.columns:
+        # Fallback for frames where time is stored in the index.
+        if not isinstance(work.index, pd.DatetimeIndex):
+            raise ValueError("Expected a 'Date'/'date' column or a DatetimeIndex.")
+        work = work.reset_index().rename(columns={work.index.name or "index": "date"})
+
+    work = work.rename(
+        columns={
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+            "AdjClose": "adjclose",
+        }
+    )
+
+    required = ["open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in work.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    return work
+
+def _kama(series, window=10, pow1=2, pow2=30):
+    """Compute a simple Kaufman Adaptive Moving Average approximation."""
+    # Simple KAMA approximation for trend and slope
+    change = series.diff(window).abs()
+    volatility = series.diff().abs().rolling(window).sum()
+    er = change / volatility
+    sc = (er * (2/(pow1+1) - 2/(pow2+1)) + 2/(pow2+1))**2
+    out = [np.nan] * len(series)
+    if len(series) > window:
+        out[window] = series.iloc[window]
+        for i in range(window + 1, len(series)):
+            out[i] = out[i-1] + sc.iloc[i] * (series.iloc[i] - out[i-1])
+    return pd.Series(out, index=series.index)
+
+def _parkinson_vol(high, low, win=20):
+    """Estimate volatility from high/low ranges using Parkinson's estimator."""
+    # High-low volatility estimator
+    with np.errstate(divide='ignore'):
+        rs = (np.log(high / low))**2
+    return np.sqrt((1.0 / (4.0 * np.log(2))) * rs.rolling(win).mean())
+
+def _rogers_satchell_vol(open_, high, low, close, win=20):
+    """Estimate volatility with the Rogers-Satchell directional estimator."""
+    # Directional volatility estimator
+    u = np.log(high / close)
+    d = np.log(low / close)
+    cu = np.log(high / open_)
+    cd = np.log(low / open_)
+    rs = (u * cu + d * cd).rolling(win).mean().clip(lower=0)
+    return np.sqrt(rs)
