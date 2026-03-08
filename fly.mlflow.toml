@@ -1,6 +1,9 @@
 app = "smx-mlflow"
 primary_region = "ord"
 
+[env]
+  MLFLOW_SERVER_ENABLE_JOB_EXECUTION = "false"
+
 [build]
   dockerfile = "Dockerfile.mlflow"
 

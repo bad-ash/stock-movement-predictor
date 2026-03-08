@@ -1,7 +1,7 @@
 """Ingest and validate raw SPY OHLCV data from yfinance."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
@@ -40,7 +40,7 @@ def main():
         "source": "yfinance",
         "symbol": "SPY",
         "auto_adjust": "False",
-        "fetched_at_utc": datetime.utcnow().isoformat(timespec="seconds"),
+        "fetched_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "frequency": "1wk",
         "notes": "Daily OHLCV + AdjClose; calendar per Yahoo Finance",
     }

@@ -48,15 +48,16 @@ def _ensure_model_loaded() -> tuple[object, list[str]]:
     global _model, _cached_expected_features, _model_error
     if _model is not None and _cached_expected_features is not None:
         return _model, _cached_expected_features
-    if _model_error is not None:
-        raise RuntimeError(_model_error)
 
     try:
         _model = mlflow.sklearn.load_model(MODEL_URI)
         _cached_expected_features = _fetch_expected_features()
+        _model_error = None
         return _model, _cached_expected_features
     except Exception as exc:  # pragma: no cover - startup/runtime environment dependent
         _model_error = str(exc)
+        _model = None
+        _cached_expected_features = None
         raise RuntimeError(_model_error) from exc
 
 
@@ -66,8 +67,10 @@ class PredictRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    if _model_error is not None:
-        return {"status": "degraded", "model_uri": MODEL_URI, "error": _model_error}
+    try:
+        _ensure_model_loaded()
+    except Exception as exc:
+        return {"status": "degraded", "model_uri": MODEL_URI, "error": str(exc)}
     return {"status": "ok", "model_uri": MODEL_URI}
 
 
