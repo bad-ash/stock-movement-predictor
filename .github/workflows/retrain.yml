@@ -11,11 +11,11 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONPATH: src
-      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-      MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+      MLFLOW_TRACKING_URI: ${{ var.MLFLOW_TRACKING_URI }}
+      MLFLOW_S3_ENDPOINT_URL: ${{ var.MLFLOW_S3_ENDPOINT_URL }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      AWS_DEFAULT_REGION: ${{ var.AWS_DEFAULT_REGION }}
       REPORT_FAMILY: ${{ vars.REPORT_FAMILY || 'price_return' }}
       REGISTERED_MODEL_NAME: ${{ vars.REGISTERED_MODEL_NAME || 'SMX_SPY_XGB' }}
       EXPERIMENT_NAME: ${{ vars.EXPERIMENT_NAME || 'SMX-SPY' }}
