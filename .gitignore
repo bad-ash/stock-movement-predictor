@@ -209,3 +209,9 @@ __marimo__/
 # Project runtime artifacts
 mlflow.db
 mlruns/
+
+# Generated data/report artifacts
+data/raw/*.parquet
+data/raw/*.meta.txt
+reports/*.json
+reports/*.md
