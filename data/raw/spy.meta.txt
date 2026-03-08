@@ -1,6 +1,0 @@
-source: yfinance
-symbol: SPY
-auto_adjust: False
-fetched_at_utc: 2026-01-03T04:16:24
-frequency: 1wk
-notes: Daily OHLCV + AdjClose; calendar per Yahoo Finance
