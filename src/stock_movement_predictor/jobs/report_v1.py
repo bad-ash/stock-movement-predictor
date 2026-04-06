@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import date, timedelta
 from datetime import datetime, timezone
 from pathlib import Path
 
 from stock_movement_predictor.eval.v1_evaluation import EvalConfig, run_ablation
-
+from stock_movement_predictor.validation import (
+    DEFAULT_FRESHNESS_DAYS,
+    validate_market_data,
+)
 
 OUT_DIR = Path("reports")
 OUT_JSON = OUT_DIR / "v1_report.json"
@@ -16,7 +21,27 @@ OUT_MD = OUT_DIR / "v1_report.md"
 
 def main() -> None:
     """Run evaluation and write report artifacts under ./reports."""
-    result = run_ablation(EvalConfig())
+    raw_path = os.getenv("RAW_PATH", EvalConfig.raw_path)
+    holdout_start = os.getenv("HOLDOUT_START", EvalConfig.holdout_start)
+    wf_min_train = int(os.getenv("WF_MIN_TRAIN", str(EvalConfig.wf_min_train)))
+    wf_test_h = int(os.getenv("WF_TEST_H", str(EvalConfig.wf_test_h)))
+    current_date = _validation_current_date()
+    freshness_window = timedelta(
+        days=int(os.getenv("FRESHNESS_DAYS", str(DEFAULT_FRESHNESS_DAYS)))
+    )
+
+    validate_market_data(
+        raw_path, current_date=current_date, freshness_window=freshness_window
+    )
+
+    result = run_ablation(
+        EvalConfig(
+            raw_path=raw_path,
+            holdout_start=holdout_start,
+            wf_min_train=wf_min_train,
+            wf_test_h=wf_test_h,
+        )
+    )
     payload = {
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "report_version": "v1",
@@ -84,6 +109,11 @@ def _render_markdown(result: dict[str, object]) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+def _validation_current_date() -> date | None:
+    configured = os.getenv("VALIDATION_CURRENT_DATE")
+    return date.fromisoformat(configured) if configured else None
 
 
 if __name__ == "__main__":

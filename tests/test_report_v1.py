@@ -8,6 +8,7 @@ def test_report_v1_main_writes_json_and_markdown(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(report_v1, "OUT_DIR", tmp_path)
     monkeypatch.setattr(report_v1, "OUT_JSON", tmp_path / "v1_report.json")
     monkeypatch.setattr(report_v1, "OUT_MD", tmp_path / "v1_report.md")
+    monkeypatch.setattr(report_v1, "validate_market_data", lambda *args, **kwargs: None)
 
     fake_result = {
         "config": {
@@ -19,12 +20,22 @@ def test_report_v1_main_writes_json_and_markdown(tmp_path: Path, monkeypatch) ->
             "grid_size": 12,
         },
         "dataset": {"dev_rows": 100, "holdout_rows": 20, "folds": 2},
-        "majority_baseline": {"logloss": 0.69, "brier": 0.25, "acc": 0.5, "dir_acc": 0.5},
+        "majority_baseline": {
+            "logloss": 0.69,
+            "brier": 0.25,
+            "acc": 0.5,
+            "dir_acc": 0.5,
+        },
         "families": [
             {
                 "family": "full",
                 "feature_count": 5,
-                "holdout_metrics": {"logloss": 0.68, "brier": 0.24, "acc": 0.55, "dir_acc": 0.55},
+                "holdout_metrics": {
+                    "logloss": 0.68,
+                    "brier": 0.24,
+                    "acc": 0.55,
+                    "dir_acc": 0.55,
+                },
                 "delta_vs_majority": {"logloss": -0.01, "acc": 0.05},
             }
         ],
@@ -39,4 +50,3 @@ def test_report_v1_main_writes_json_and_markdown(tmp_path: Path, monkeypatch) ->
     assert payload["report_version"] == "v1"
     assert payload["families"][0]["family"] == "full"
     assert "# SMX V1 Evaluation Report" in report_v1.OUT_MD.read_text()
-

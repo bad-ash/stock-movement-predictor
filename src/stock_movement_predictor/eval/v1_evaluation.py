@@ -20,6 +20,7 @@ from stock_movement_predictor.models.xgboost import (
     evaluate_classification,
     fit_xgb_class,
 )
+from stock_movement_predictor.validation import read_market_data
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,9 @@ def run_ablation(config: EvalConfig) -> dict[str, object]:
 
     families = make_feature_families(X.columns)
     grid = make_ablation_grid()
-    majority_holdout = score_majority_baseline(y_dev, y_holdout, threshold=config.threshold)
+    majority_holdout = score_majority_baseline(
+        y_dev, y_holdout, threshold=config.threshold
+    )
 
     family_results: list[dict[str, object]] = []
     for name, selector in families.items():
@@ -128,7 +131,14 @@ def load_xy(raw_path: str) -> tuple[pd.DataFrame, pd.Series]:
     Returns:
         Tuple of `(X, y)` where `X` is feature matrix and `y` is binary target.
     """
-    df = pd.read_parquet(raw_path).set_index("Date")
+    df = read_market_data(raw_path)
+    if "Date" in df.columns:
+        df = df.set_index("Date")
+    elif "date" in df.columns:
+        df = df.set_index("date")
+    else:
+        raise ValueError("Expected a 'Date' or 'date' column in market data.")
+    df.index = pd.to_datetime(df.index)
     X, y, _ = make_features(df)
     return X, y
 
@@ -152,7 +162,9 @@ def split_dev_holdout(
     return X_dev, y_dev, X_holdout, y_holdout
 
 
-def make_feature_families(columns: Iterable[str]) -> Dict[str, Callable[[Iterable[str]], List[str]]]:
+def make_feature_families(
+    columns: Iterable[str],
+) -> Dict[str, Callable[[Iterable[str]], List[str]]]:
     """Build family selectors used by ablation.
 
     Args:
@@ -162,21 +174,62 @@ def make_feature_families(columns: Iterable[str]) -> Dict[str, Callable[[Iterabl
         Mapping from family name to selector function.
     """
     price_return = {
-        "open", "high", "low", "close", "volume", "dollar_vol",
-        "log_ret_1", "log_ret_5", "roc_5", "roc_10", "roc_20", "vroc_10",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "dollar_vol",
+        "log_ret_1",
+        "log_ret_5",
+        "roc_5",
+        "roc_10",
+        "roc_20",
+        "vroc_10",
     }
     technical = {
-        "rsi_14", "stoch_k", "stoch_d", "williams_r", "cci_20",
-        "macd", "macd_signal", "macd_hist",
-        "sma_20", "sma_50", "sma_100", "ema_20", "ema_50",
-        "kama_10", "kama_20", "kama_10_slope_5", "kama_20_slope_5",
-        "close_over_sma20", "ema20_over_ema50",
-        "atr_pct", "hv_20", "hv_63", "parkinson_20", "rs_20",
-        "bb_bandwidth", "bb_percent_b",
-        "vol_z_252", "obv", "cmf_20", "adl", "mfi",
+        "rsi_14",
+        "stoch_k",
+        "stoch_d",
+        "williams_r",
+        "cci_20",
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "sma_20",
+        "sma_50",
+        "sma_100",
+        "ema_20",
+        "ema_50",
+        "kama_10",
+        "kama_20",
+        "kama_10_slope_5",
+        "kama_20_slope_5",
+        "close_over_sma20",
+        "ema20_over_ema50",
+        "atr_pct",
+        "hv_20",
+        "hv_63",
+        "parkinson_20",
+        "rs_20",
+        "bb_bandwidth",
+        "bb_percent_b",
+        "vol_z_252",
+        "obv",
+        "cmf_20",
+        "adl",
+        "mfi",
     }
     calendar = {
-        "dow", "month", "yday", "dow_sin", "dow_cos", "mon_sin", "mon_cos", "yday_sin", "yday_cos",
+        "dow",
+        "month",
+        "yday",
+        "dow_sin",
+        "dow_cos",
+        "mon_sin",
+        "mon_cos",
+        "yday_sin",
+        "yday_cos",
     }
     return {
         "full": lambda cols: list(cols),
@@ -253,7 +306,9 @@ def walkforward_tune_xgb(
                 )
             )
         results.append(TuneResult(params=params, metrics=_avg_metrics(fold_metrics)))
-    results.sort(key=lambda r: (r.metrics["logloss"], r.metrics["brier"], -r.metrics["acc"]))
+    results.sort(
+        key=lambda r: (r.metrics["logloss"], r.metrics["brier"], -r.metrics["acc"])
+    )
     return results
 
 
@@ -296,7 +351,9 @@ def fit_xgb_on_dev_then_score_holdout(
     return evaluate_classification(y_holdout.to_numpy(), y_prob, threshold=threshold)
 
 
-def score_majority_baseline(y_dev: pd.Series, y_holdout: pd.Series, threshold: float) -> dict[str, float]:
+def score_majority_baseline(
+    y_dev: pd.Series, y_holdout: pd.Series, threshold: float
+) -> dict[str, float]:
     """Score a constant-probability majority baseline on holdout.
 
     Args:
